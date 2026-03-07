@@ -1,0 +1,5 @@
+.lira/
+build/
+tmp/
+coverage.out
+*.test
