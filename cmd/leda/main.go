@@ -12,7 +12,7 @@ import (
 	"github.com/jgabor/leda/parser"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -50,20 +50,26 @@ Commands:
   serve    Start MCP server
   version  Print version
 
+Author: Jonathan Gabor (github.com/jgabor)
+
 Run 'leda <command> -h' for command-specific help.`)
 }
 
 func cmdBuild(args []string) {
 	fs := flag.NewFlagSet("build", flag.ExitOnError)
 	root := fs.String("root", ".", "Root directory to scan")
-	output := fs.String("output", "graph.gob", "Output file path")
+	output := fs.String("output", ".leda", "Output file path")
 	lang := fs.String("lang", "", "Comma-separated language filter (go,ts,py)")
 	exclude := fs.String("exclude", "", "Comma-separated glob patterns to exclude")
 	format := fs.String("format", "text", "Output format: text, json")
 	dryRun := fs.Bool("dry-run", false, "List files that would be parsed without writing a graph")
+	noGitIgnore := fs.Bool("no-gitignore", false, "Do not respect .gitignore files")
 	_ = fs.Parse(args)
 
 	var opts []leda.Option
+	if *noGitIgnore {
+		opts = append(opts, leda.WithGitIgnore(false))
+	}
 	if *lang != "" {
 		exts := langToExtensions(*lang)
 		if len(exts) > 0 {
@@ -130,7 +136,7 @@ func cmdBuild(args []string) {
 
 func cmdQuery(args []string) {
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
-	graphPath := fs.String("graph", "graph.gob", "Path to serialized graph")
+	graphPath := fs.String("graph", ".leda", "Path to serialized graph")
 	format := fs.String("format", "files", "Output format: files, llm, json")
 	maxFiles := fs.Int("max-files", 0, "Maximum number of files to return")
 	maxTokens := fs.Int("max-tokens", 0, "Maximum estimated tokens")
@@ -195,7 +201,7 @@ func cmdQuery(args []string) {
 
 func cmdStats(args []string) {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
-	graphPath := fs.String("graph", "graph.gob", "Path to serialized graph")
+	graphPath := fs.String("graph", ".leda", "Path to serialized graph")
 	format := fs.String("format", "text", "Output format: text, json")
 	_ = fs.Parse(args)
 

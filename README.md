@@ -45,7 +45,7 @@ Commands:
 ### Build a graph
 
 ```bash
-leda build --root ./myproject --output graph.gob --lang go,ts
+leda build --root ./myproject --output .leda --lang go,ts
 leda build --root ./myproject --dry-run              # preview files without writing
 leda build --root ./myproject --format json           # machine-readable output
 ```
@@ -53,16 +53,16 @@ leda build --root ./myproject --format json           # machine-readable output
 ### Query with a prompt
 
 ```bash
-leda query --graph graph.gob "fix the auth middleware"
-leda query --graph graph.gob --format llm --strategy symbol "database connection"
-leda query --graph graph.gob --format json "auth"    # structured JSON output
+leda query --graph .leda "fix the auth middleware"
+leda query --graph .leda --format llm --strategy symbol "database connection"
+leda query --graph .leda --format json "auth"    # structured JSON output
 ```
 
 ### Graph statistics
 
 ```bash
-leda stats --graph graph.gob
-leda stats --graph graph.gob --format json
+leda stats --graph .leda
+leda stats --graph .leda --format json
 ```
 
 ### MCP server
@@ -108,3 +108,7 @@ Leda is inspired by [graph-oriented-generation](https://github.com/dchisholm125/
 ## License
 
 MIT
+
+## Author
+
+Jonathan Gabor ([@jgabor](https://github.com/jgabor))

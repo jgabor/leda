@@ -24,6 +24,7 @@ type buildConfig struct {
 	exclude    []string
 	maxDepth   int
 	resolver   resolve.Resolver
+	gitIgnore  bool
 }
 
 // WithParsers overrides the default parser registry.
@@ -67,6 +68,14 @@ func WithResolver(r resolve.Resolver) Option {
 	}
 }
 
+// WithGitIgnore controls whether .gitignore files are respected during graph building.
+// Enabled by default.
+func WithGitIgnore(enabled bool) Option {
+	return func(c *buildConfig) {
+		c.gitIgnore = enabled
+	}
+}
+
 // DefaultExclude contains directory names skipped by default during graph building.
 var DefaultExclude = []string{
 	".git", "node_modules", "vendor", ".next",
@@ -82,8 +91,9 @@ func BuildGraph(rootDir string, opts ...Option) (*Graph, error) {
 	}
 
 	cfg := &buildConfig{
-		parsers:  parser.DefaultRegistry(),
-		maxDepth: -1,
+		parsers:   parser.DefaultRegistry(),
+		maxDepth:  -1,
+		gitIgnore: true,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -104,12 +114,24 @@ func BuildGraph(rootDir string, opts ...Option) (*Graph, error) {
 }
 
 func collectNodes(g *Graph, rootDir string, cfg *buildConfig) error {
+	var gi *gitIgnore
+	if cfg.gitIgnore {
+		gi = loadGitIgnores(rootDir)
+	}
+
 	return filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 
 		relPath, _ := filepath.Rel(rootDir, path)
+
+		if gi != nil && relPath != "." && gi.match(relPath, info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
 		for _, pattern := range cfg.exclude {
 			if matched, _ := filepath.Match(pattern, relPath); matched {

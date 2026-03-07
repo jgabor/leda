@@ -33,7 +33,7 @@ testdata/        - Multi-file Go project for integration tests
 - **Minimal external deps**: graph and resolver use only stdlib; parsers use tree-sitter
 - **Resolver returns `[]string`**: supports both single-file (TS/Python relative) and
   multi-file (Go package directory) resolution without special-casing in the graph builder
-- **Graph is `encoding/gob`** with a version number for forward compat
+- **Graph serialization** uses `encoding/gob` with a version number for forward compat; default output is `.leda`
 - **Seed matching** tokenizes the prompt, strips stop words, splits identifiers on
   camelCase/snake_case boundaries, and scores nodes by term overlap via a shared
   `seedWith` function parameterized by a scoring function

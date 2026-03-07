@@ -93,7 +93,7 @@ func handleRequest(req jsonRPCRequest) jsonRPCResponse {
 				},
 				"serverInfo": map[string]any{
 					"name":    "leda",
-					"version": "0.1.0",
+					"version": "0.2.0",
 				},
 			},
 		}
@@ -229,7 +229,7 @@ func toolBuildGraph(id any, args json.RawMessage) jsonRPCResponse {
 
 	// Save to temp file.
 	h := sha256.Sum256([]byte(input.RootDir))
-	graphPath := filepath.Join(os.TempDir(), fmt.Sprintf("leda-%x.gob", h[:8]))
+	graphPath := filepath.Join(os.TempDir(), fmt.Sprintf("leda-%x.bin", h[:8]))
 	if err := g.SaveToFile(graphPath); err != nil {
 		return errorResult(id, err.Error())
 	}
