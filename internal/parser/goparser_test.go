@@ -102,3 +102,19 @@ var unexported = "bye"
 		t.Errorf("missing exported symbol: %s", s)
 	}
 }
+
+func TestRegistryForLanguage(t *testing.T) {
+	reg := DefaultRegistry()
+	p := reg.ForLanguage("go")
+	if p == nil {
+		t.Fatal("ForLanguage(go): got nil")
+	}
+	if p.Language() != "go" {
+		t.Errorf("ForLanguage(go).Language() = %s", p.Language())
+	}
+
+	p = reg.ForLanguage("nonexistent")
+	if p != nil {
+		t.Errorf("ForLanguage(nonexistent): got %v, want nil", p)
+	}
+}

@@ -2,7 +2,7 @@
 
 ## What this is
 
-A Go library + CLI + MCP server for dependency-graph-based context isolation.
+A Go CLI + MCP server for dependency-graph-based context isolation.
 Given a codebase and a natural-language prompt, leda builds a directed
 dependency graph from source files, seeds entry points from the prompt, and
 traverses the graph to return only the files an LLM actually needs.
@@ -10,20 +10,22 @@ traverses the graph to return only the files an LLM actually needs.
 ## Architecture
 
 ```
-leda.go          - Public API: BuildGraph, IsolateContext, Load/Save
-graph.go         - Directed graph data structure + traversal (BFS reachable,
-                   shortest path, subgraph extraction)
-seed.go          - Prompt tokenization, stop-word filtering, identifier splitting,
-                   seed matching (filename, symbol, path strategies)
-parser/          - Parser interface + registry (keyed by extension and language)
-  treesitter.go  - Tree-sitter based parser (imports + symbols via queries)
-  languages.go   - Per-language tree-sitter configs (query patterns, grammars)
-resolve/         - Import path → absolute file path resolution
-  resolve.go     - Relative resolver, Go module resolver, multi-chain
-                   Resolver.Resolve returns []string (multi-file resolution)
-cmd/leda/        - CLI (build, query, stats, serve)
-  mcp.go         - MCP JSON-RPC server over stdio
-testdata/        - Multi-file Go project for integration tests
+cmd/leda/             - CLI (build, query, stats, serve)
+  mcp.go              - MCP server over stdio (via mcp-go)
+internal/
+  leda/               - Core library: BuildGraph, IsolateContext, Load/Save
+    graph.go          - Directed graph data structure + traversal (BFS reachable,
+                        shortest path, subgraph extraction)
+    seed.go           - Prompt tokenization, stop-word filtering, identifier splitting,
+                        seed matching (filename, symbol, path strategies)
+    gitignore.go      - .gitignore pattern matching
+  parser/             - Parser interface + registry (keyed by extension and language)
+    treesitter.go     - Tree-sitter based parser (imports + symbols via queries)
+    languages.go      - Per-language tree-sitter configs (query patterns, grammars)
+  resolve/            - Import path → absolute file path resolution
+    resolve.go        - Relative resolver, Go module resolver, multi-chain
+                        Resolver.Resolve returns []string (multi-file resolution)
+testdata/             - Multi-file Go project for integration tests
 ```
 
 ## Key design decisions
@@ -74,10 +76,10 @@ go build ./cmd/leda
 
 ## Adding a new language parser
 
-1. Add a `langConfig` entry in `parser/languages.go` with tree-sitter query patterns
+1. Add a `langConfig` entry in `internal/parser/languages.go` with tree-sitter query patterns
 2. `go get github.com/tree-sitter/tree-sitter-LANG/bindings/go@latest`
 3. If the language has non-relative imports (like Go modules), implement a `resolve.Resolver`
-4. If a new resolver was added, register it in `resolve.DefaultResolver()`
+4. If a new resolver was added, register it in `internal/resolve.DefaultResolver()`
 5. Add a short alias in `cmd/leda/main.go` `langAliases` for CLI `--lang` support
 6. Add test files in `testdata/`
 

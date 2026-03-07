@@ -10,26 +10,6 @@ By deterministically tracing dependency paths rather than relying on vector simi
 go install github.com/jgabor/leda/cmd/leda@latest
 ```
 
-## Library usage
-
-```go
-// Build a dependency graph from a project root.
-g, err := leda.BuildGraph("./myproject",
-    leda.WithExtensions("go", "ts"),
-    leda.WithExclude("testdata"),
-)
-
-// Isolate the files relevant to a prompt.
-ctx := g.IsolateContext("fix the auth middleware",
-    leda.WithMaxFiles(20),
-    leda.WithMaxTokens(8000),
-    leda.WithSeedStrategy(leda.SeedSymbol),
-)
-
-// Get LLM-ready output.
-output, err := ctx.FormatForLLM()
-```
-
 ## CLI
 
 ```
@@ -71,9 +51,9 @@ leda stats --graph .leda --format json
 leda serve
 ```
 
-Exposes `leda_build_graph` and `leda_isolate_context` as MCP tools over stdio.
+Exposes `leda_build_graph` and `leda_isolate_context` as MCP tools over stdio using [mcp-go](https://github.com/mark3labs/mcp-go). All input paths are validated and canonicalized.
 
-All commands support `--format json` for agent-friendly output. The MCP server validates and canonicalizes all input paths.
+All commands support `--format json` for agent-friendly output.
 
 ## Supported languages
 
@@ -92,7 +72,18 @@ All parsers use [tree-sitter](https://tree-sitter.github.io/tree-sitter/) for ac
 | Ruby       | `rb`      | Relative             |
 | PHP        | `php`     | Relative             |
 
-New languages can be added by defining a `langConfig` in `parser/languages.go` with tree-sitter query patterns.
+New languages can be added by defining a `langConfig` in `internal/parser/languages.go` with tree-sitter query patterns.
+
+## Project structure
+
+```
+cmd/leda/           CLI and MCP server
+internal/
+  leda/             Graph building, context isolation, seeding
+  parser/           Tree-sitter parsers (imports + symbols)
+  resolve/          Import path → file resolution
+testdata/           Integration test fixtures
+```
 
 ## How it works
 

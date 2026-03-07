@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -9,171 +9,54 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jgabor/leda"
+	"github.com/jgabor/leda/internal/leda"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
-// JSON-RPC types for MCP protocol.
-
-type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type jsonRPCResponse struct {
-	JSONRPC string    `json:"jsonrpc"`
-	ID      any       `json:"id,omitempty"`
-	Result  any       `json:"result,omitempty"`
-	Error   *rpcError `json:"error,omitempty"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type mcpToolInfo struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
-}
-
-type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type mcpToolResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
-}
-
 func serveMCP() error {
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	s := server.NewMCPServer("leda", version,
+		server.WithToolCapabilities(false),
+	)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
+	s.AddTool(
+		mcp.NewTool("leda_build_graph",
+			mcp.WithDescription("Build a dependency graph from a codebase directory"),
+			mcp.WithString("root_dir",
+				mcp.Required(),
+				mcp.Description("Path to the codebase root"),
+			),
+			mcp.WithArray("languages",
+				mcp.Description("Languages to parse (default: all)"),
+				mcp.WithStringEnumItems([]string{"go", "typescript", "javascript", "python", "rust", "java", "c", "cpp", "ruby", "php"}),
+			),
+		),
+		handleBuildGraph,
+	)
 
-		var req jsonRPCRequest
-		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			writeResponse(jsonRPCResponse{
-				JSONRPC: "2.0",
-				Error:   &rpcError{Code: -32700, Message: "Parse error"},
-			})
-			continue
-		}
+	s.AddTool(
+		mcp.NewTool("leda_isolate_context",
+			mcp.WithDescription("Given a prompt, return only the source files relevant to answer it. Uses dependency graph traversal instead of vector similarity."),
+			mcp.WithString("prompt",
+				mcp.Required(),
+				mcp.Description("Natural language query about the codebase"),
+			),
+			mcp.WithString("graph_path",
+				mcp.Required(),
+				mcp.Description("Path to serialized graph (from leda_build_graph)"),
+			),
+			mcp.WithNumber("max_tokens",
+				mcp.Description("Optional token budget cap"),
+			),
+			mcp.WithString("format",
+				mcp.Description("Output format: files, contents, llm"),
+				mcp.Enum("files", "contents", "llm"),
+			),
+		),
+		handleIsolateContext,
+	)
 
-		resp := handleRequest(req)
-		writeResponse(resp)
-	}
-
-	return scanner.Err()
-}
-
-func writeResponse(resp jsonRPCResponse) {
-	resp.JSONRPC = "2.0"
-	data, _ := json.Marshal(resp)
-	fmt.Println(string(data))
-}
-
-func handleRequest(req jsonRPCRequest) jsonRPCResponse {
-	switch req.Method {
-	case "initialize":
-		return jsonRPCResponse{
-			ID: req.ID,
-			Result: map[string]any{
-				"protocolVersion": "2024-11-05",
-				"capabilities": map[string]any{
-					"tools": map[string]any{},
-				},
-				"serverInfo": map[string]any{
-					"name":    "leda",
-					"version": "0.2.0",
-				},
-			},
-		}
-
-	case "notifications/initialized":
-		// No response needed for notifications.
-		return jsonRPCResponse{ID: req.ID, Result: map[string]any{}}
-
-	case "tools/list":
-		return jsonRPCResponse{
-			ID: req.ID,
-			Result: map[string]any{
-				"tools": []mcpToolInfo{
-					{
-						Name:        "leda_build_graph",
-						Description: "Build a dependency graph from a codebase directory",
-						InputSchema: json.RawMessage(`{
-							"type": "object",
-							"properties": {
-								"root_dir": {"type": "string", "description": "Path to the codebase root"},
-								"languages": {"type": "array", "items": {"type": "string", "enum": ["go", "typescript", "javascript", "python", "rust", "java", "c", "cpp", "ruby", "php"]}, "description": "Languages to parse (default: all)"}
-							},
-							"required": ["root_dir"]
-						}`),
-					},
-					{
-						Name:        "leda_isolate_context",
-						Description: "Given a prompt, return only the source files relevant to answer it. Uses dependency graph traversal instead of vector similarity.",
-						InputSchema: json.RawMessage(`{
-							"type": "object",
-							"properties": {
-								"prompt": {"type": "string", "description": "Natural language query about the codebase"},
-								"graph_path": {"type": "string", "description": "Path to serialized graph (from leda_build_graph)"},
-								"max_tokens": {"type": "integer", "description": "Optional token budget cap"},
-								"format": {"type": "string", "enum": ["files", "contents", "llm"], "description": "Output format"}
-							},
-							"required": ["prompt", "graph_path"]
-						}`),
-					},
-				},
-			},
-		}
-
-	case "tools/call":
-		return handleToolCall(req)
-
-	default:
-		return jsonRPCResponse{
-			ID:    req.ID,
-			Error: &rpcError{Code: -32601, Message: fmt.Sprintf("Method not found: %s", req.Method)},
-		}
-	}
-}
-
-func handleToolCall(req jsonRPCRequest) jsonRPCResponse {
-	var params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return jsonRPCResponse{
-			ID:    req.ID,
-			Error: &rpcError{Code: -32602, Message: "Invalid params"},
-		}
-	}
-
-	switch params.Name {
-	case "leda_build_graph":
-		return toolBuildGraph(req.ID, params.Arguments)
-	case "leda_isolate_context":
-		return toolIsolateContext(req.ID, params.Arguments)
-	default:
-		return jsonRPCResponse{
-			ID: req.ID,
-			Result: mcpToolResult{
-				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", params.Name)}},
-				IsError: true,
-			},
-		}
-	}
+	return server.ServeStdio(s)
 }
 
 // validatePath ensures a path is absolute after cleaning, contains no traversal
@@ -199,39 +82,34 @@ func validatePath(p string) (string, error) {
 	return abs, nil
 }
 
-func toolBuildGraph(id any, args json.RawMessage) jsonRPCResponse {
-	var input struct {
-		RootDir   string   `json:"root_dir"`
-		Languages []string `json:"languages"`
-	}
-	if err := json.Unmarshal(args, &input); err != nil {
-		return errorResult(id, "Invalid arguments: "+err.Error())
+func handleBuildGraph(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	rootDir, err := req.RequireString("root_dir")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	rootDir, err := validatePath(input.RootDir)
+	rootDir, err = validatePath(rootDir)
 	if err != nil {
-		return errorResult(id, "Invalid root_dir: "+err.Error())
+		return mcp.NewToolResultError("Invalid root_dir: " + err.Error()), nil
 	}
-	input.RootDir = rootDir
 
 	var opts []leda.Option
-	if len(input.Languages) > 0 {
-		exts := langToExtensions(strings.Join(input.Languages, ","))
+	if langs := req.GetStringSlice("languages", nil); len(langs) > 0 {
+		exts := langToExtensions(strings.Join(langs, ","))
 		if len(exts) > 0 {
 			opts = append(opts, leda.WithExtensions(exts...))
 		}
 	}
 
-	g, err := leda.BuildGraph(input.RootDir, opts...)
+	g, err := leda.BuildGraph(rootDir, opts...)
 	if err != nil {
-		return errorResult(id, err.Error())
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Save to temp file.
-	h := sha256.Sum256([]byte(input.RootDir))
+	h := sha256.Sum256([]byte(rootDir))
 	graphPath := filepath.Join(os.TempDir(), fmt.Sprintf("leda-%x.bin", h[:8]))
 	if err := g.SaveToFile(graphPath); err != nil {
-		return errorResult(id, err.Error())
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	stats := g.Stats()
@@ -242,78 +120,59 @@ func toolBuildGraph(id any, args json.RawMessage) jsonRPCResponse {
 	}
 	resultJSON, _ := json.Marshal(result)
 
-	return jsonRPCResponse{
-		ID: id,
-		Result: mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: string(resultJSON)}},
-		},
-	}
+	return mcp.NewToolResultText(string(resultJSON)), nil
 }
 
-func toolIsolateContext(id any, args json.RawMessage) jsonRPCResponse {
-	var input struct {
-		Prompt    string `json:"prompt"`
-		GraphPath string `json:"graph_path"`
-		MaxTokens int    `json:"max_tokens"`
-		Format    string `json:"format"`
-	}
-	if err := json.Unmarshal(args, &input); err != nil {
-		return errorResult(id, "Invalid arguments: "+err.Error())
+func handleIsolateContext(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	prompt, err := req.RequireString("prompt")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	graphPath, err := validatePath(input.GraphPath)
+	graphPathRaw, err := req.RequireString("graph_path")
 	if err != nil {
-		return errorResult(id, "Invalid graph_path: "+err.Error())
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	graphPath, err := validatePath(graphPathRaw)
+	if err != nil {
+		return mcp.NewToolResultError("Invalid graph_path: " + err.Error()), nil
 	}
 
 	g, err := leda.LoadFromFile(graphPath)
 	if err != nil {
-		return errorResult(id, err.Error())
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	var opts []leda.QueryOption
-	if input.MaxTokens > 0 {
-		opts = append(opts, leda.WithMaxTokens(input.MaxTokens))
+	var qopts []leda.QueryOption
+	if maxTokens := req.GetInt("max_tokens", 0); maxTokens > 0 {
+		qopts = append(qopts, leda.WithMaxTokens(maxTokens))
 	}
 
-	ctx := g.IsolateContext(input.Prompt, opts...)
+	isolatedCtx := g.IsolateContext(prompt, qopts...)
 
+	format := req.GetString("format", "files")
 	var text string
-	switch input.Format {
+	switch format {
 	case "llm":
-		text, err = ctx.FormatForLLM()
+		text, err = isolatedCtx.FormatForLLM()
 		if err != nil {
-			return errorResult(id, err.Error())
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 	case "contents":
-		text, err = ctx.Contents()
+		text, err = isolatedCtx.Contents()
 		if err != nil {
-			return errorResult(id, err.Error())
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 	default:
 		result := map[string]any{
-			"files":       ctx.Files,
-			"seeds":       ctx.Seeds,
-			"token_count": ctx.TokenCount,
+			"files":       isolatedCtx.Files,
+			"seeds":       isolatedCtx.Seeds,
+			"token_count": isolatedCtx.TokenCount,
 		}
 		resultJSON, _ := json.Marshal(result)
 		text = string(resultJSON)
 	}
 
-	return jsonRPCResponse{
-		ID: id,
-		Result: mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: text}},
-		},
-	}
-}
-
-func errorResult(id any, msg string) jsonRPCResponse {
-	return jsonRPCResponse{
-		ID: id,
-		Result: mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: msg}},
-			IsError: true,
-		},
-	}
+	return mcp.NewToolResultText(text), nil
 }

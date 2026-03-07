@@ -48,6 +48,14 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "1"
 
+      - name: Compress with UPX
+        if: matrix.goos == 'linux'
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          version: latest
+          files: leda-*
+          args: --best --lzma
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

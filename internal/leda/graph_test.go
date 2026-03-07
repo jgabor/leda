@@ -166,3 +166,52 @@ func TestSaveLoad(t *testing.T) {
 		t.Errorf("ancestors(D) after load: got %v, want 3 entries", anc)
 	}
 }
+
+func TestNodeInfos(t *testing.T) {
+	g := makeTestGraph()
+	infos := g.NodeInfos()
+	if len(infos) != 6 {
+		t.Errorf("NodeInfos: got %d, want 6", len(infos))
+	}
+	paths := make(map[string]bool)
+	for _, info := range infos {
+		paths[info.Path] = true
+	}
+	for _, name := range []string{"A", "B", "C", "D", "E", "F"} {
+		if !paths[name] {
+			t.Errorf("NodeInfos: missing %s", name)
+		}
+	}
+}
+
+func TestAddEdgeNonexistentNodes(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "A", RelPath: "A"})
+
+	// Edge to nonexistent node should be ignored.
+	g.AddEdge("A", "Z")
+	if len(g.Edges()) != 0 {
+		t.Errorf("AddEdge to nonexistent: got %d edges, want 0", len(g.Edges()))
+	}
+
+	// Edge from nonexistent node should be ignored.
+	g.AddEdge("Z", "A")
+	if len(g.Edges()) != 0 {
+		t.Errorf("AddEdge from nonexistent: got %d edges, want 0", len(g.Edges()))
+	}
+}
+
+func TestTopNFewerThanN(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "A", RelPath: "A"})
+	g.AddNode(NodeInfo{Path: "B", RelPath: "B"})
+	g.AddEdge("A", "B")
+
+	entries := g.topN(g.outEdges, 100)
+	if len(entries) != 1 {
+		t.Errorf("topN: got %d, want 1", len(entries))
+	}
+	if entries[0].File != "A" || entries[0].Count != 1 {
+		t.Errorf("topN: got %v", entries[0])
+	}
+}

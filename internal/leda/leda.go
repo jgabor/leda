@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jgabor/leda/parser"
-	"github.com/jgabor/leda/resolve"
+	"github.com/jgabor/leda/internal/parser"
+	"github.com/jgabor/leda/internal/resolve"
 )
 
 // Option configures graph building.

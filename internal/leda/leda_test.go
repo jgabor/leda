@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildGraphIntegration(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestBuildGraphIntegration(t *testing.T) {
 }
 
 func TestIsolateContextAuth(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestIsolateContextAuth(t *testing.T) {
 }
 
 func TestIsolateContextNoMatch(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestIsolateContextNoMatch(t *testing.T) {
 }
 
 func TestSerializationRoundTrip(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSerializationRoundTrip(t *testing.T) {
 }
 
 func TestSaveLoadFile(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestSaveLoadFile(t *testing.T) {
 }
 
 func TestIsolateContextWithMaxFiles(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestIsolateContextWithMaxFiles(t *testing.T) {
 }
 
 func TestIsolateContextWithSymbolStrategy(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestIsolateContextWithSymbolStrategy(t *testing.T) {
 }
 
 func TestContentsWithBudget(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestContentsWithBudget(t *testing.T) {
 }
 
 func TestFormatForLLM(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestFormatForLLM(t *testing.T) {
 }
 
 func TestWithMaxTokens(t *testing.T) {
-	testDir, err := filepath.Abs("testdata/goproject")
+	testDir, err := filepath.Abs("../../testdata/goproject")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,15 +293,174 @@ func TestWithMaxTokens(t *testing.T) {
 	}
 }
 
+func TestBuildGraphWithOptions(t *testing.T) {
+	testDir, err := filepath.Abs("../../testdata/goproject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// WithExtensions
+	g, err := BuildGraph(testDir, WithExtensions("go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range g.Nodes() {
+		if filepath.Ext(n) != ".go" {
+			t.Errorf("WithExtensions: found non-.go file %s", n)
+		}
+	}
+
+	// WithExtensions with dot prefix already present
+	g2, err := BuildGraph(testDir, WithExtensions(".go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g2.Nodes()) != len(g.Nodes()) {
+		t.Errorf("WithExtensions(.go) vs (go): %d vs %d", len(g2.Nodes()), len(g.Nodes()))
+	}
+}
+
+func TestBuildGraphWithExclude(t *testing.T) {
+	dir := t.TempDir()
+
+	_ = os.MkdirAll(filepath.Join(dir, "src"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "vendor2"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "vendor2", "lib.go"), []byte("package lib\n"), 0o644)
+
+	g, err := BuildGraph(dir, WithExclude("vendor2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, n := range g.Nodes() {
+		if strings.Contains(n, "vendor2") {
+			t.Error("WithExclude: vendor2 file should not be in graph")
+		}
+	}
+}
+
+func TestBuildGraphWithMaxDepth(t *testing.T) {
+	dir := t.TempDir()
+
+	_ = os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "root.go"), []byte("package main\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a", "a.go"), []byte("package a\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a", "b", "b.go"), []byte("package b\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a", "b", "c", "c.go"), []byte("package c\n"), 0o644)
+
+	g, err := BuildGraph(dir, WithMaxDepth(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, n := range g.Nodes() {
+		rel, _ := filepath.Rel(dir, n)
+		depth := strings.Count(rel, string(os.PathSeparator))
+		if depth >= 2 {
+			t.Errorf("WithMaxDepth(1): found file at depth %d: %s", depth, rel)
+		}
+	}
+
+	// MaxDepth(0) should only include root-level files.
+	g2, err := BuildGraph(dir, WithMaxDepth(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range g2.Nodes() {
+		rel, _ := filepath.Rel(dir, n)
+		if strings.Contains(rel, string(os.PathSeparator)) {
+			t.Errorf("WithMaxDepth(0): found nested file: %s", rel)
+		}
+	}
+}
+
+func TestIsolateContextWithCustomSeeder(t *testing.T) {
+	testDir, err := filepath.Abs("../../testdata/goproject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := BuildGraph(testDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	customSeeder := func(prompt string, nodes []NodeInfo) []string {
+		called = true
+		for _, n := range nodes {
+			if strings.HasSuffix(n.Path, "auth.go") {
+				return []string{n.Path}
+			}
+		}
+		return nil
+	}
+
+	ctx := g.IsolateContext("anything", WithCustomSeeder(customSeeder))
+	if !called {
+		t.Error("custom seeder was not called")
+	}
+	if len(ctx.Seeds) == 0 {
+		t.Error("custom seeder should have returned seeds")
+	}
+}
+
+func TestIsolateContextWithPathStrategy(t *testing.T) {
+	testDir, err := filepath.Abs("../../testdata/goproject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := BuildGraph(testDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := g.IsolateContext("auth", WithSeedStrategy(SeedPath))
+	if len(ctx.Seeds) == 0 {
+		t.Fatal("SeedPath: no seeds")
+	}
+}
+
+func TestIsolateContextCustomSeederNil(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "/test/a.go", RelPath: "a.go"})
+
+	cfg := &queryConfig{strategy: SeedCustom, customSeeder: nil}
+	seeds := g.findSeeds("test", cfg)
+	if seeds != nil {
+		t.Errorf("nil custom seeder: got %v, want nil", seeds)
+	}
+}
+
+func TestIsolateMultipleSeedsNoPath(t *testing.T) {
+	// Two seeds with no path between them => fall back to descendants of each.
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "A", RelPath: "A", TokenEstimate: 10})
+	g.AddNode(NodeInfo{Path: "B", RelPath: "B", TokenEstimate: 10})
+	g.AddNode(NodeInfo{Path: "C", RelPath: "C", TokenEstimate: 10})
+	g.AddNode(NodeInfo{Path: "D", RelPath: "D", TokenEstimate: 10})
+	g.AddEdge("A", "C")
+	g.AddEdge("B", "D")
+	// A and B are disconnected
+
+	files := g.isolate([]string{"A", "B"})
+	// Should contain A, B, C, D (descendants of each)
+	if len(files) != 4 {
+		t.Errorf("isolate disconnected seeds: got %d files, want 4: %v", len(files), files)
+	}
+}
+
 func BenchmarkBuildGraph(b *testing.B) {
-	testDir, _ := filepath.Abs("testdata/goproject")
+	testDir, _ := filepath.Abs("../../testdata/goproject")
 	for b.Loop() {
 		_, _ = BuildGraph(testDir)
 	}
 }
 
 func BenchmarkIsolateContext(b *testing.B) {
-	testDir, _ := filepath.Abs("testdata/goproject")
+	testDir, _ := filepath.Abs("../../testdata/goproject")
 	g, _ := BuildGraph(testDir)
 	b.ResetTimer()
 	for b.Loop() {

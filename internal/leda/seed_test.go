@@ -111,3 +111,18 @@ func TestSeedNoMatch(t *testing.T) {
 		t.Errorf("seedByFilename: got %v, want empty (no match)", seeds)
 	}
 }
+
+func TestSeedByPath(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "/test/auth/middleware.go", RelPath: "auth/middleware.go"})
+	g.AddNode(NodeInfo{Path: "/test/config/config.go", RelPath: "config/config.go"})
+	g.AddNode(NodeInfo{Path: "/test/db/db.go", RelPath: "db/db.go"})
+
+	seeds := seedByPath("auth middleware", g)
+	if len(seeds) == 0 {
+		t.Fatal("seedByPath: got no seeds")
+	}
+	if seeds[0] != "/test/auth/middleware.go" {
+		t.Errorf("seedByPath: top seed got %s, want /test/auth/middleware.go", seeds[0])
+	}
+}

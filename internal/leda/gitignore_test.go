@@ -27,6 +27,26 @@ func TestGitIgnoreMatch(t *testing.T) {
 		{[]string{"**/temp"}, "temp", true, true},
 		{[]string{"doc/*.txt"}, "doc/notes.txt", false, true},
 		{[]string{"doc/*.txt"}, "src/doc/notes.txt", false, false},
+		// ** at end of pattern
+		{[]string{"logs/**"}, "logs/debug.log", false, true},
+		{[]string{"logs/**"}, "logs/sub/trace.log", false, true},
+		// ? wildcard
+		{[]string{"file?.txt"}, "file1.txt", false, true},
+		{[]string{"file?.txt"}, "file12.txt", false, false},
+		// Character class [abc]
+		{[]string{"file[0-9].txt"}, "file3.txt", false, true},
+		{[]string{"file[0-9].txt"}, "fileA.txt", false, false},
+		// Escaped character
+		{[]string{"file\\*.txt"}, "file*.txt", false, true},
+		// Unclosed bracket
+		{[]string{"file[.txt"}, "file[.txt", false, true},
+		// Special regex chars in pattern
+		{[]string{"file.bak"}, "file.bak", false, true},
+		{[]string{"a+b.txt"}, "a+b.txt", false, true},
+		// Subdirectory .gitignore (anchored pattern with subdir)
+		{[]string{"sub/dir"}, "sub/dir", true, true},
+		// Patterns with comments and empty lines
+		{[]string{"# comment", "", "*.tmp"}, "debug.tmp", false, true},
 	}
 
 	for _, tt := range tests {

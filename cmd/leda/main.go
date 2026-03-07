@@ -5,58 +5,73 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
-	"github.com/jgabor/leda"
-	"github.com/jgabor/leda/parser"
+	"github.com/jgabor/leda/internal/extract"
+	"github.com/jgabor/leda/internal/leda"
+	"github.com/jgabor/leda/internal/parser"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(1)
-	}
-
-	switch os.Args[1] {
-	case "build":
-		cmdBuild(os.Args[2:])
-	case "query":
-		cmdQuery(os.Args[2:])
-	case "stats":
-		cmdStats(os.Args[2:])
-	case "serve":
-		cmdServe(os.Args[2:])
-	case "version", "-v", "--version":
-		fmt.Println(version)
-	case "help", "-h", "--help":
-		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "leda: unknown command %q\n", os.Args[1])
-		usage()
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: leda <command> [options]
+func run(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		usage(stderr)
+		return fmt.Errorf("leda: no command specified")
+	}
+
+	switch args[0] {
+	case "build":
+		return cmdBuild(args[1:], stdout, stderr)
+	case "query":
+		return cmdQuery(args[1:], stdout, stderr)
+	case "stats":
+		return cmdStats(args[1:], stdout, stderr)
+	case "extract":
+		return cmdExtract(args[1:], stdout, stderr)
+	case "serve":
+		return cmdServe(args[1:], stderr)
+	case "version", "-v", "--version":
+		_, _ = fmt.Fprintln(stdout, version)
+		return nil
+	case "help", "-h", "--help":
+		usage(stderr)
+		return nil
+	default:
+		usage(stderr)
+		return fmt.Errorf("leda: unknown command %q", args[0])
+	}
+}
+
+func usage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, `Usage: leda <command> [options]
 
 Commands:
   build    Build and serialize a dependency graph
   query    Query the graph with a natural language prompt
   stats    Print graph statistics
+  extract  Extract structured codebase facts as JSON
   serve    Start MCP server
   version  Print version
 
-Author: Jonathan Gabor (github.com/jgabor)
+Run 'leda <command> -h' for command-specific help.
 
-Run 'leda <command> -h' for command-specific help.`)
+Author: Jonathan Gabor (github.com/jgabor)
+URL:    https://github.com/jgabor/leda`)
 }
 
-func cmdBuild(args []string) {
-	fs := flag.NewFlagSet("build", flag.ExitOnError)
+func cmdBuild(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	root := fs.String("root", ".", "Root directory to scan")
 	output := fs.String("output", ".leda", "Output file path")
 	lang := fs.String("lang", "", "Comma-separated language filter (go,ts,py)")
@@ -64,7 +79,9 @@ func cmdBuild(args []string) {
 	format := fs.String("format", "text", "Output format: text, json")
 	dryRun := fs.Bool("dry-run", false, "List files that would be parsed without writing a graph")
 	noGitIgnore := fs.Bool("no-gitignore", false, "Do not respect .gitignore files")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	var opts []leda.Option
 	if *noGitIgnore {
@@ -82,12 +99,11 @@ func cmdBuild(args []string) {
 	}
 
 	if *format == "text" {
-		fmt.Fprintf(os.Stderr, "leda: building graph from %s\n", *root)
+		_, _ = fmt.Fprintf(stderr, "leda: building graph from %s\n", *root)
 	}
 	g, err := leda.BuildGraph(*root, opts...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "leda: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("leda: %w", err)
 	}
 
 	stats := g.Stats()
@@ -101,21 +117,20 @@ func cmdBuild(args []string) {
 				"edges":   stats.EdgeCount,
 				"files":   g.Nodes(),
 			}
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
 			_ = enc.Encode(result)
 		default:
-			fmt.Fprintf(os.Stderr, "leda: dry run — %d nodes, %d edges (no graph written)\n", stats.NodeCount, stats.EdgeCount)
+			_, _ = fmt.Fprintf(stderr, "leda: dry run — %d nodes, %d edges (no graph written)\n", stats.NodeCount, stats.EdgeCount)
 			for _, f := range g.Nodes() {
-				fmt.Println(f)
+				_, _ = fmt.Fprintln(stdout, f)
 			}
 		}
-		return
+		return nil
 	}
 
 	if err := g.SaveToFile(*output); err != nil {
-		fmt.Fprintf(os.Stderr, "leda: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("leda: %w", err)
 	}
 
 	switch *format {
@@ -126,33 +141,35 @@ func cmdBuild(args []string) {
 			"edges":      stats.EdgeCount,
 			"components": stats.Components,
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(result)
 	default:
-		fmt.Fprintf(os.Stderr, "leda: wrote %s (%d nodes, %d edges)\n", *output, stats.NodeCount, stats.EdgeCount)
+		_, _ = fmt.Fprintf(stderr, "leda: wrote %s (%d nodes, %d edges)\n", *output, stats.NodeCount, stats.EdgeCount)
 	}
+	return nil
 }
 
-func cmdQuery(args []string) {
-	fs := flag.NewFlagSet("query", flag.ExitOnError)
+func cmdQuery(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	graphPath := fs.String("graph", ".leda", "Path to serialized graph")
 	format := fs.String("format", "files", "Output format: files, llm, json")
 	maxFiles := fs.Int("max-files", 0, "Maximum number of files to return")
 	maxTokens := fs.Int("max-tokens", 0, "Maximum estimated tokens")
 	strategy := fs.String("strategy", "filename", "Seed strategy: filename, symbol, path")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	prompt := strings.Join(fs.Args(), " ")
 	if prompt == "" {
-		fmt.Fprintln(os.Stderr, "leda: query requires a prompt")
-		os.Exit(1)
+		return fmt.Errorf("leda: query requires a prompt")
 	}
 
 	g, err := leda.LoadFromFile(*graphPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "leda: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("leda: %w", err)
 	}
 
 	var opts []leda.QueryOption
@@ -174,41 +191,42 @@ func cmdQuery(args []string) {
 	switch *format {
 	case "files":
 		for _, f := range ctx.Files {
-			fmt.Println(f)
+			_, _ = fmt.Fprintln(stdout, f)
 		}
-		fmt.Fprintf(os.Stderr, "leda: %d files, ~%d tokens\n", len(ctx.Files), ctx.TokenCount)
+		_, _ = fmt.Fprintf(stderr, "leda: %d files, ~%d tokens\n", len(ctx.Files), ctx.TokenCount)
 	case "llm":
 		out, err := ctx.FormatForLLM()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "leda: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("leda: %w", err)
 		}
-		fmt.Print(out)
+		_, _ = fmt.Fprint(stdout, out)
 	case "json":
 		result := map[string]any{
 			"files":       ctx.Files,
 			"seeds":       ctx.Seeds,
 			"token_count": ctx.TokenCount,
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(result)
 	default:
-		fmt.Fprintf(os.Stderr, "leda: unknown format %q\n", *format)
-		os.Exit(1)
+		return fmt.Errorf("leda: unknown format %q", *format)
 	}
+	return nil
 }
 
-func cmdStats(args []string) {
-	fs := flag.NewFlagSet("stats", flag.ExitOnError)
+func cmdStats(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	graphPath := fs.String("graph", ".leda", "Path to serialized graph")
 	format := fs.String("format", "text", "Output format: text, json")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	g, err := leda.LoadFromFile(*graphPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "leda: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("leda: %w", err)
 	}
 
 	stats := g.Stats()
@@ -234,44 +252,81 @@ func cmdStats(args []string) {
 			}
 			result["top_fan_in"] = fanIn
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(result)
 	default:
-		fmt.Printf("Nodes:      %d\n", stats.NodeCount)
-		fmt.Printf("Edges:      %d\n", stats.EdgeCount)
-		fmt.Printf("Components: %d\n", stats.Components)
+		_, _ = fmt.Fprintf(stdout, "Nodes:      %d\n", stats.NodeCount)
+		_, _ = fmt.Fprintf(stdout, "Edges:      %d\n", stats.EdgeCount)
+		_, _ = fmt.Fprintf(stdout, "Components: %d\n", stats.Components)
 
 		if len(stats.TopFanOut) > 0 {
-			fmt.Println("\nTop Fan-Out (most imports):")
+			_, _ = fmt.Fprintln(stdout, "\nTop Fan-Out (most imports):")
 			for _, e := range stats.TopFanOut {
-				fmt.Printf("  %3d  %s\n", e.Count, e.File)
+				_, _ = fmt.Fprintf(stdout, "  %3d  %s\n", e.Count, e.File)
 			}
 		}
 		if len(stats.TopFanIn) > 0 {
-			fmt.Println("\nTop Fan-In (most imported):")
+			_, _ = fmt.Fprintln(stdout, "\nTop Fan-In (most imported):")
 			for _, e := range stats.TopFanIn {
-				fmt.Printf("  %3d  %s\n", e.Count, e.File)
+				_, _ = fmt.Fprintf(stdout, "  %3d  %s\n", e.Count, e.File)
 			}
 		}
 	}
+	return nil
 }
 
-func cmdServe(args []string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	transport := fs.String("transport", "stdio", "Transport: stdio")
-	_ = fs.Parse(args)
-
-	if *transport != "stdio" {
-		fmt.Fprintf(os.Stderr, "leda: unsupported transport %q (only stdio supported)\n", *transport)
-		os.Exit(1)
+func cmdExtract(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("extract", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	root := fs.String("root", ".", "Project root path")
+	format := fs.String("format", "", "Output format (json)")
+	lang := fs.String("lang", "", "Comma-separated language filter (go,ts,py)")
+	noGitIgnore := fs.Bool("no-gitignore", false, "Do not respect .gitignore files")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
 
-	fmt.Fprintln(os.Stderr, "leda: starting MCP server on stdio")
-	if err := serveMCP(); err != nil {
-		fmt.Fprintf(os.Stderr, "leda: %v\n", err)
-		os.Exit(1)
+	if *format != "json" {
+		return fmt.Errorf("leda: extract requires --format json")
 	}
+
+	var opts []leda.Option
+	if *noGitIgnore {
+		opts = append(opts, leda.WithGitIgnore(false))
+	}
+	reg := parser.DefaultRegistry()
+	if *lang != "" {
+		exts := langToExtensions(*lang)
+		if len(exts) > 0 {
+			opts = append(opts, leda.WithExtensions(exts...))
+		}
+	}
+
+	_, _ = fmt.Fprintln(stderr, "leda: extracting codebase facts from", *root)
+	g, err := leda.BuildGraph(*root, opts...)
+	if err != nil {
+		return fmt.Errorf("leda: %w", err)
+	}
+
+	result, err := extract.Run(*root, g, reg)
+	if err != nil {
+		return fmt.Errorf("leda: %w", err)
+	}
+
+	enc := json.NewEncoder(stdout)
+	return enc.Encode(result)
+}
+
+func cmdServe(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(stderr, "leda: starting MCP server on stdio")
+	return serveMCP()
 }
 
 // langAliases maps short names and aliases to canonical language names
