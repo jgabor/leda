@@ -110,3 +110,87 @@ func TestBuildGraphRespectsGitIgnore(t *testing.T) {
 		t.Error("with gitignore disabled, ignored file should be in graph")
 	}
 }
+
+func TestNestedGitIgnoreWildcardDoesNotLeakGlobally(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a source file that should be found.
+	if err := os.MkdirAll(filepath.Join(dir, "cmd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cmd", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an ignored directory with a nested .gitignore that uses "*".
+	nested := filepath.Join(dir, "tmp", "sub", ".pi")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".gitignore"), []byte("*\n!.gitignore\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root .gitignore ignores tmp/.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("tmp/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := BuildGraph(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(g.Nodes()) == 0 {
+		t.Fatal("expected nodes in graph, got 0 — nested .gitignore wildcard leaked globally")
+	}
+
+	found := false
+	for _, n := range g.Nodes() {
+		rel, _ := filepath.Rel(dir, n)
+		if rel == filepath.Join("cmd", "main.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("cmd/main.go should be in graph")
+	}
+}
+
+func TestNestedGitIgnorePatternsScopedToSubdir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create files at root and in a subdirectory.
+	if err := os.WriteFile(filepath.Join(dir, "root.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "keep.go"), []byte("package sub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "hide.log"), []byte("log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "root.log"), []byte("log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// sub/.gitignore ignores *.log — should only apply under sub/.
+	if err := os.WriteFile(filepath.Join(sub, ".gitignore"), []byte("*.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gi := loadGitIgnores(dir)
+
+	// sub/hide.log should be ignored.
+	if !gi.match("sub/hide.log", false) {
+		t.Error("sub/hide.log should be ignored by sub/.gitignore")
+	}
+	// root.log should NOT be ignored (pattern is scoped to sub/).
+	if gi.match("root.log", false) {
+		t.Error("root.log should not be ignored — sub/.gitignore pattern should be scoped")
+	}
+}

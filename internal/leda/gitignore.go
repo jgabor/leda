@@ -67,7 +67,12 @@ func (gi *gitIgnore) addPattern(line, baseDir, rootDir string) {
 			regexStr = "^" + regexp.QuoteMeta(rel+"/") + gitignorePatternToRegex(line)
 		}
 	} else {
-		regexStr = "(^|/)" + gitignorePatternToRegex(line)
+		rel, _ := filepath.Rel(rootDir, baseDir)
+		if rel == "." {
+			regexStr = "(^|/)" + gitignorePatternToRegex(line)
+		} else {
+			regexStr = "^" + regexp.QuoteMeta(rel+"/") + "(.*/)?" + gitignorePatternToRegex(line)
+		}
 	}
 	regexStr += "(/.*)?$"
 
@@ -160,7 +165,13 @@ func loadGitIgnores(rootDir string) *gitIgnore {
 		}
 		if info.IsDir() {
 			base := filepath.Base(path)
-			if base == ".git" || base == "node_modules" || base == "vendor" {
+			for _, skip := range DefaultExclude {
+				if base == skip {
+					return filepath.SkipDir
+				}
+			}
+			relPath, _ := filepath.Rel(rootDir, path)
+			if relPath != "." && gi.match(relPath, true) {
 				return filepath.SkipDir
 			}
 			return nil
