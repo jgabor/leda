@@ -37,13 +37,18 @@ func (gi *gitIgnore) loadFile(path, baseDir, rootDir string) error {
 }
 
 func (gi *gitIgnore) addPattern(line, baseDir, rootDir string) {
-	line = strings.TrimRight(line, " ")
+	// Trailing spaces are ignored unless quoted with backslash.
+	line = trimTrailingSpaces(line)
+
 	if line == "" || strings.HasPrefix(line, "#") {
 		return
 	}
 
 	negate := false
-	if strings.HasPrefix(line, "!") {
+	if strings.HasPrefix(line, "\\#") || strings.HasPrefix(line, "\\!") {
+		// A backslash before the first character escapes # and !.
+		line = line[1:]
+	} else if strings.HasPrefix(line, "!") {
 		negate = true
 		line = line[1:]
 	}
@@ -109,6 +114,16 @@ func (gi *gitIgnore) match(relPath string, isDir bool) bool {
 	return matched
 }
 
+// trimTrailingSpaces removes trailing unescaped spaces per gitignore spec:
+// "Trailing spaces are ignored unless they are quoted with backslash (\)."
+func trimTrailingSpaces(s string) string {
+	trimmed := strings.TrimRight(s, " ")
+	if strings.HasSuffix(trimmed, "\\") {
+		return trimmed[:len(trimmed)-1] + " "
+	}
+	return trimmed
+}
+
 func gitignorePatternToRegex(pattern string) string {
 	var b strings.Builder
 	i := 0
@@ -116,17 +131,24 @@ func gitignorePatternToRegex(pattern string) string {
 		ch := pattern[i]
 		switch ch {
 		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				if i+2 < len(pattern) && pattern[i+2] == '/' {
+			// Consume all consecutive asterisks. Per spec, other
+			// consecutive asterisks (***) are treated as **.
+			stars := 0
+			for i < len(pattern) && pattern[i] == '*' {
+				stars++
+				i++
+			}
+			if stars >= 2 {
+				if i < len(pattern) && pattern[i] == '/' {
 					b.WriteString("(.*/)?")
-					i += 3
-					continue
+					i++
+				} else {
+					b.WriteString(".*")
 				}
-				b.WriteString(".*")
-				i += 2
 				continue
 			}
 			b.WriteString("[^/]*")
+			continue
 		case '?':
 			b.WriteString("[^/]")
 		case '.', '+', '^', '$', '|', '(', ')', '{', '}':
