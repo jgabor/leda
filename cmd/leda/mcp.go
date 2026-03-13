@@ -52,6 +52,12 @@ func serveMCP() error {
 				mcp.Description("Output format: files, contents, llm"),
 				mcp.Enum("files", "contents", "llm"),
 			),
+			mcp.WithNumber("max_files",
+				mcp.Description("Maximum number of files to return (default: 20)"),
+			),
+			mcp.WithString("exclude",
+				mcp.Description("Comma-separated patterns to exclude from results"),
+			),
 		),
 		handleIsolateContext,
 	)
@@ -147,6 +153,13 @@ func handleIsolateContext(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	var qopts []leda.QueryOption
 	if maxTokens := req.GetInt("max_tokens", 0); maxTokens > 0 {
 		qopts = append(qopts, leda.WithMaxTokens(maxTokens))
+	}
+	if maxFiles := req.GetInt("max_files", 0); maxFiles > 0 {
+		qopts = append(qopts, leda.WithMaxFiles(maxFiles))
+	}
+	if exclude := req.GetString("exclude", ""); exclude != "" {
+		patterns := strings.Split(exclude, ",")
+		qopts = append(qopts, leda.WithQueryExclude(patterns...))
 	}
 
 	isolatedCtx := g.IsolateContext(prompt, qopts...)

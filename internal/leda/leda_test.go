@@ -563,6 +563,69 @@ func TestIsolateIncludesCallers(t *testing.T) {
 	}
 }
 
+func TestDefaultMaxFilesCap(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "/test/seed.go", RelPath: "seed.go", TokenEstimate: 100})
+	for i := range 30 {
+		path := fmt.Sprintf("/test/dep_%d.go", i)
+		rel := fmt.Sprintf("dep_%d.go", i)
+		g.AddNode(NodeInfo{Path: path, RelPath: rel, TokenEstimate: 100})
+		g.AddEdge("/test/seed.go", path)
+	}
+
+	ctx := g.IsolateContext("seed")
+	if len(ctx.Files) > defaultMaxFiles {
+		t.Errorf("default cap: got %d files, want <= %d", len(ctx.Files), defaultMaxFiles)
+	}
+}
+
+func TestGenericFilenamePenalty(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "/test/seed.go", RelPath: "seed.go", TokenEstimate: 10})
+	g.AddNode(NodeInfo{Path: "/test/errors.go", RelPath: "errors.go", TokenEstimate: 10})
+	g.AddNode(NodeInfo{Path: "/test/relevant.go", RelPath: "relevant.go", TokenEstimate: 10})
+	g.AddEdge("/test/seed.go", "/test/errors.go")
+	g.AddEdge("/test/seed.go", "/test/relevant.go")
+
+	depths := map[string]int{
+		"/test/seed.go":     0,
+		"/test/errors.go":   1,
+		"/test/relevant.go": 1,
+	}
+	seedScores := map[string]int{"/test/seed.go": 1}
+	ranked := g.rankNodes(depths, seedScores)
+
+	var errPos, relPos int
+	for i, n := range ranked {
+		switch n {
+		case "/test/errors.go":
+			errPos = i
+		case "/test/relevant.go":
+			relPos = i
+		}
+	}
+	if relPos >= errPos {
+		t.Errorf("relevant.go (pos %d) should rank above errors.go (pos %d)", relPos, errPos)
+	}
+}
+
+func TestQueryExclude(t *testing.T) {
+	g := newGraph("/test")
+	g.AddNode(NodeInfo{Path: "/test/auth.go", RelPath: "auth.go", TokenEstimate: 10})
+	g.AddNode(NodeInfo{Path: "/test/noise.go", RelPath: "noise.go", TokenEstimate: 10})
+	g.AddEdge("/test/auth.go", "/test/noise.go")
+
+	ctx := g.IsolateContext("auth", WithQueryExclude("noise.go"))
+	for _, f := range ctx.Files {
+		if f == "/test/noise.go" {
+			t.Error("WithQueryExclude: noise.go should be excluded")
+		}
+	}
+	if len(ctx.Files) == 0 {
+		t.Error("WithQueryExclude: should still return auth.go")
+	}
+}
+
 func BenchmarkBuildGraph(b *testing.B) {
 	testDir, _ := filepath.Abs("../../testdata/goproject")
 	for b.Loop() {

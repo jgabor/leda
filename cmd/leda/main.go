@@ -14,7 +14,7 @@ import (
 	"github.com/jgabor/leda/internal/parser"
 )
 
-var version = "0.4.1"
+var version = "0.4.2"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -158,6 +158,7 @@ func cmdQuery(args []string, stdout, stderr io.Writer) error {
 	maxFiles := fs.Int("max-files", 0, "Maximum number of files to return")
 	maxTokens := fs.Int("max-tokens", 0, "Maximum estimated tokens")
 	strategy := fs.String("strategy", "filename", "Seed strategy: filename, symbol, path")
+	exclude := fs.String("exclude", "", "Comma-separated patterns to exclude from results")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -184,6 +185,10 @@ func cmdQuery(args []string, stdout, stderr io.Writer) error {
 		opts = append(opts, leda.WithSeedStrategy(leda.SeedSymbol))
 	case "path":
 		opts = append(opts, leda.WithSeedStrategy(leda.SeedPath))
+	}
+	if *exclude != "" {
+		patterns := strings.Split(*exclude, ",")
+		opts = append(opts, leda.WithQueryExclude(patterns...))
 	}
 
 	ctx := g.IsolateContext(prompt, opts...)

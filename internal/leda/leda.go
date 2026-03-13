@@ -76,6 +76,21 @@ func WithGitIgnore(enabled bool) Option {
 	}
 }
 
+const (
+	defaultMaxFiles  = 20
+	defaultMaxTokens = 128000
+)
+
+var genericBasenames = map[string]bool{
+	"errors": true, "error": true,
+	"io":     true,
+	"config": true,
+	"utils":  true, "util": true,
+	"helpers": true, "helper": true,
+	"common": true, "shared": true,
+	"types": true, "constants": true,
+}
+
 // DefaultExclude contains directory names skipped by default during graph building.
 var DefaultExclude = []string{
 	".git", "node_modules", "vendor", ".next",
@@ -218,10 +233,11 @@ func resolveEdges(g *Graph, rootDir string, cfg *buildConfig) {
 type QueryOption func(*queryConfig)
 
 type queryConfig struct {
-	maxFiles     int
-	maxTokens    int
-	strategy     SeedStrategy
-	customSeeder func(prompt string, nodes []NodeInfo) []string
+	maxFiles        int
+	maxTokens       int
+	strategy        SeedStrategy
+	customSeeder    func(prompt string, nodes []NodeInfo) []string
+	excludePatterns []string
 }
 
 // WithMaxFiles caps the result set to n files.
@@ -242,6 +258,13 @@ func WithMaxTokens(n int) QueryOption {
 func WithSeedStrategy(s SeedStrategy) QueryOption {
 	return func(c *queryConfig) {
 		c.strategy = s
+	}
+}
+
+// WithQueryExclude filters files matching the given patterns from query results.
+func WithQueryExclude(patterns ...string) QueryOption {
+	return func(c *queryConfig) {
+		c.excludePatterns = append(c.excludePatterns, patterns...)
 	}
 }
 
@@ -286,6 +309,9 @@ func (g *Graph) IsolateContext(prompt string, opts ...QueryOption) *Context {
 	}
 
 	files := g.isolate(seedResults)
+	if len(cfg.excludePatterns) > 0 {
+		files = g.filterExcluded(files, cfg.excludePatterns)
+	}
 	files, totalTokens := g.applyBudget(files, cfg)
 
 	return &Context{
@@ -408,10 +434,16 @@ func (g *Graph) rankNodes(depths map[string]int, seedScores map[string]int) []st
 			seedBonus = 10.0 + float64(sc)
 		}
 		s := seedBonus + 1.0/(1.0+float64(depths[node]))
-		if _, isSeed := seedScores[node]; !isSeed && totalNodes > 0 {
-			fanIn := float64(len(g.inEdges[node]))
-			if fanIn/totalNodes > 0.05 {
-				s *= 1.0 - fanIn/totalNodes
+		if _, isSeed := seedScores[node]; !isSeed {
+			if totalNodes > 0 {
+				fanIn := float64(len(g.inEdges[node]))
+				if fanIn/totalNodes > 0.05 {
+					s *= 1.0 - fanIn/totalNodes
+				}
+			}
+			base := strings.TrimSuffix(filepath.Base(node), filepath.Ext(node))
+			if genericBasenames[strings.ToLower(base)] {
+				s *= 0.3
 			}
 		}
 		return s
@@ -428,26 +460,55 @@ func (g *Graph) rankNodes(depths map[string]int, seedScores map[string]int) []st
 }
 
 func (g *Graph) applyBudget(files []string, cfg *queryConfig) ([]string, int) {
-	if cfg.maxFiles > 0 && len(files) > cfg.maxFiles {
-		files = files[:cfg.maxFiles]
+	maxFiles := cfg.maxFiles
+	if maxFiles <= 0 {
+		maxFiles = defaultMaxFiles
+	}
+	if len(files) > maxFiles {
+		files = files[:maxFiles]
 	}
 
-	if cfg.maxTokens > 0 {
-		totalTokens := 0
-		var capped []string
-		for _, f := range files {
-			if info, ok := g.nodes[f]; ok {
-				if totalTokens+info.TokenEstimate > cfg.maxTokens {
-					break
-				}
-				totalTokens += info.TokenEstimate
-				capped = append(capped, f)
+	maxTokens := cfg.maxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultMaxTokens
+	}
+	totalTokens := 0
+	var capped []string
+	for _, f := range files {
+		if info, ok := g.nodes[f]; ok {
+			if totalTokens+info.TokenEstimate > maxTokens {
+				break
+			}
+			totalTokens += info.TokenEstimate
+			capped = append(capped, f)
+		}
+	}
+	return capped, totalTokens
+}
+
+func (g *Graph) filterExcluded(files []string, patterns []string) []string {
+	var result []string
+	for _, f := range files {
+		info := g.nodes[f]
+		if info == nil {
+			continue
+		}
+		excluded := false
+		for _, pattern := range patterns {
+			if matched, _ := filepath.Match(pattern, info.RelPath); matched {
+				excluded = true
+				break
+			}
+			if matched, _ := filepath.Match(pattern, filepath.Base(f)); matched {
+				excluded = true
+				break
 			}
 		}
-		return capped, totalTokens
+		if !excluded {
+			result = append(result, f)
+		}
 	}
-
-	return files, g.totalTokens(files)
+	return result
 }
 
 func (g *Graph) totalTokens(files []string) int {
