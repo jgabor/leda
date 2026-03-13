@@ -2,6 +2,7 @@ package leda
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -449,6 +450,96 @@ func TestIsolateMultipleSeedsNoPath(t *testing.T) {
 	// Should contain A, B, C, D (descendants of each)
 	if len(files) != 4 {
 		t.Errorf("isolate disconnected seeds: got %d files, want 4: %v", len(files), files)
+	}
+}
+
+func TestRankNodesSeedsFirst(t *testing.T) {
+	g := newGraph("/test")
+	for _, n := range []string{"S", "A", "B"} {
+		g.AddNode(NodeInfo{Path: n, RelPath: n})
+	}
+	g.AddEdge("S", "A")
+	g.AddEdge("A", "B")
+
+	depths := map[string]int{"S": 0, "A": 1, "B": 2}
+	seeds := map[string]bool{"S": true}
+	ranked := g.rankNodes(depths, seeds)
+
+	if len(ranked) != 3 {
+		t.Fatalf("rankNodes: got %d nodes, want 3", len(ranked))
+	}
+	if ranked[0] != "S" {
+		t.Errorf("rankNodes: seed should be first, got %s", ranked[0])
+	}
+	if ranked[1] != "A" || ranked[2] != "B" {
+		t.Errorf("rankNodes: expected [S, A, B], got %v", ranked)
+	}
+}
+
+func TestRankNodesFanInPenalty(t *testing.T) {
+	g := newGraph("/test")
+	names := []string{"S", "H", "L"}
+	for i := range 10 {
+		names = append(names, fmt.Sprintf("imp_%d", i))
+	}
+	names = append(names, "leaf_imp")
+	for len(names) < 20 {
+		names = append(names, fmt.Sprintf("filler_%d", len(names)))
+	}
+	for _, n := range names {
+		g.AddNode(NodeInfo{Path: n, RelPath: n})
+	}
+	g.AddEdge("S", "H")
+	g.AddEdge("S", "L")
+	for i := range 10 {
+		g.AddEdge(fmt.Sprintf("imp_%d", i), "H")
+	}
+	g.AddEdge("leaf_imp", "L")
+
+	depths := map[string]int{"S": 0, "H": 1, "L": 1}
+	seeds := map[string]bool{"S": true}
+	ranked := g.rankNodes(depths, seeds)
+
+	var hPos, lPos int
+	for i, n := range ranked {
+		if n == "H" {
+			hPos = i
+		}
+		if n == "L" {
+			lPos = i
+		}
+	}
+	if lPos >= hPos {
+		t.Errorf("rankNodes: leaf L (pos %d) should rank above hub H (pos %d)", lPos, hPos)
+	}
+}
+
+func TestIsolateIncludesCallers(t *testing.T) {
+	g := newGraph("/test")
+	for _, n := range []string{"grandcaller", "caller", "seed", "dep"} {
+		g.AddNode(NodeInfo{Path: n, RelPath: n, TokenEstimate: 10})
+	}
+	g.AddEdge("grandcaller", "caller")
+	g.AddEdge("caller", "seed")
+	g.AddEdge("seed", "dep")
+
+	files := g.isolate([]string{"seed"})
+	fileSet := make(map[string]bool)
+	for _, f := range files {
+		fileSet[f] = true
+	}
+
+	if !fileSet["seed"] {
+		t.Error("isolate: missing seed")
+	}
+	if !fileSet["caller"] {
+		t.Error("isolate: missing 1-hop caller")
+	}
+	if !fileSet["dep"] {
+		t.Error("isolate: missing descendant dep")
+	}
+	if fileSet["grandcaller"] {
+		t.Error("isolate: should not include grandcaller (2 hops)")
 	}
 }
 

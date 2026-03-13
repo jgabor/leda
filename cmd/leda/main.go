@@ -14,7 +14,7 @@ import (
 	"github.com/jgabor/leda/internal/parser"
 )
 
-var version = "0.3.1"
+var version = "0.4.0"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {

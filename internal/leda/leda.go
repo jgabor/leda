@@ -309,8 +309,10 @@ func (g *Graph) findSeeds(prompt string, cfg *queryConfig) []string {
 
 func (g *Graph) isolate(seeds []string) []string {
 	isolated := make(map[string]bool, len(seeds))
+	seedSet := make(map[string]bool, len(seeds))
 	for _, s := range seeds {
 		isolated[s] = true
+		seedSet[s] = true
 	}
 
 	if len(seeds) == 1 {
@@ -350,11 +352,66 @@ func (g *Graph) isolate(seeds []string) []string {
 		}
 	}
 
-	files := make([]string, 0, len(isolated))
-	for f := range isolated {
-		files = append(files, f)
+	// Add 1-hop callers of seeds.
+	for _, s := range seeds {
+		for _, caller := range g.inEdges[s] {
+			isolated[caller] = true
+		}
 	}
-	sort.Strings(files)
+
+	// Compute depths: seeds=0, forward BFS from each seed, callers=1.
+	nodeDepths := make(map[string]int)
+	for _, s := range seeds {
+		nodeDepths[s] = 0
+		for node, dist := range g.reachableWithDepth(s, g.outEdges) {
+			if !isolated[node] {
+				continue
+			}
+			if existing, ok := nodeDepths[node]; !ok || dist < existing {
+				nodeDepths[node] = dist
+			}
+		}
+	}
+	for _, s := range seeds {
+		for _, caller := range g.inEdges[s] {
+			if _, ok := nodeDepths[caller]; !ok {
+				nodeDepths[caller] = 1
+			}
+		}
+	}
+
+	return g.rankNodes(nodeDepths, seedSet)
+}
+
+func (g *Graph) rankNodes(depths map[string]int, seeds map[string]bool) []string {
+	totalNodes := float64(len(g.nodes))
+	files := make([]string, 0, len(depths))
+	for node := range depths {
+		files = append(files, node)
+	}
+
+	score := func(node string) float64 {
+		var seedBonus float64
+		if seeds[node] {
+			seedBonus = 10.0
+		}
+		s := seedBonus + 1.0/(1.0+float64(depths[node]))
+		if !seeds[node] && totalNodes > 0 {
+			fanIn := float64(len(g.inEdges[node]))
+			if fanIn/totalNodes > 0.05 {
+				s *= 1.0 - fanIn/totalNodes
+			}
+		}
+		return s
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		si, sj := score(files[i]), score(files[j])
+		if si != sj {
+			return si > sj
+		}
+		return files[i] < files[j]
+	})
 	return files
 }
 

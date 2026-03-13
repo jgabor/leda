@@ -198,6 +198,31 @@ func (g *Graph) reachable(start string, edges map[string][]string) []string {
 	return result
 }
 
+// reachableWithDepth returns all nodes reachable from start following the given edge map (BFS),
+// mapped to their hop count from start. Start node is excluded.
+func (g *Graph) reachableWithDepth(start string, edges map[string][]string) map[string]int {
+	type entry struct {
+		node  string
+		depth int
+	}
+	depths := make(map[string]int)
+	visited := map[string]bool{start: true}
+	queue := list.New()
+	queue.PushBack(entry{start, 0})
+	for queue.Len() > 0 {
+		e := queue.Remove(queue.Front()).(entry)
+		for _, next := range edges[e.node] {
+			if !visited[next] {
+				visited[next] = true
+				d := e.depth + 1
+				depths[next] = d
+				queue.PushBack(entry{next, d})
+			}
+		}
+	}
+	return depths
+}
+
 func (g *Graph) descendants(start string) []string {
 	return g.reachable(start, g.outEdges)
 }

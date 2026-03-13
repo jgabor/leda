@@ -23,6 +23,31 @@ func makeTestGraph() *Graph {
 	return g
 }
 
+func TestReachableWithDepth(t *testing.T) {
+	g := makeTestGraph()
+
+	depths := g.reachableWithDepth("A", g.outEdges)
+	want := map[string]int{"B": 1, "C": 1, "D": 2, "E": 3}
+	if len(depths) != len(want) {
+		t.Fatalf("reachableWithDepth(A): got %v, want %v", depths, want)
+	}
+	for node, d := range want {
+		if depths[node] != d {
+			t.Errorf("reachableWithDepth(A)[%s]: got %d, want %d", node, depths[node], d)
+		}
+	}
+
+	depths = g.reachableWithDepth("D", g.outEdges)
+	if len(depths) != 1 || depths["E"] != 1 {
+		t.Errorf("reachableWithDepth(D): got %v, want {E:1}", depths)
+	}
+
+	depths = g.reachableWithDepth("F", g.outEdges)
+	if len(depths) != 0 {
+		t.Errorf("reachableWithDepth(F): got %v, want empty", depths)
+	}
+}
+
 func TestDescendants(t *testing.T) {
 	g := makeTestGraph()
 
