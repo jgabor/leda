@@ -106,7 +106,7 @@ func splitCamelCase(s string) []string {
 type scoreFunc func(terms []string, path string, info *NodeInfo) int
 
 // seedWith runs the common seed pattern: tokenize prompt, score all nodes, return sorted.
-func seedWith(prompt string, g *Graph, scorer scoreFunc) []string {
+func seedWith(prompt string, g *Graph, scorer scoreFunc) []seedResult {
 	terms := tokenizePrompt(prompt)
 	if len(terms) == 0 {
 		return nil
@@ -119,10 +119,11 @@ func seedWith(prompt string, g *Graph, scorer scoreFunc) []string {
 		}
 	}
 
-	return sortedSeeds(results)
+	sortSeedResults(results)
+	return results
 }
 
-func seedByFilename(prompt string, g *Graph) []string {
+func seedByFilename(prompt string, g *Graph) []seedResult {
 	return seedWith(prompt, g, func(terms []string, path string, info *NodeInfo) int {
 		score := 0
 		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -131,7 +132,7 @@ func seedByFilename(prompt string, g *Graph) []string {
 
 		for _, term := range terms {
 			for _, bp := range baseParts {
-				if bp == term || strings.Contains(bp, term) || strings.Contains(term, bp) {
+				if bp == term || strings.Contains(bp, term) || (len(bp) >= 3 && strings.Contains(term, bp)) {
 					score++
 					break
 				}
@@ -147,14 +148,14 @@ func seedByFilename(prompt string, g *Graph) []string {
 	})
 }
 
-func seedBySymbol(prompt string, g *Graph) []string {
+func seedBySymbol(prompt string, g *Graph) []seedResult {
 	return seedWith(prompt, g, func(terms []string, _ string, info *NodeInfo) int {
 		score := 0
 		for _, sym := range info.Symbols {
 			symParts := splitIdentifier(sym)
 			for _, term := range terms {
 				for _, sp := range symParts {
-					if sp == term || strings.Contains(sp, term) || strings.Contains(term, sp) {
+					if sp == term || strings.Contains(sp, term) || (len(sp) >= 3 && strings.Contains(term, sp)) {
 						score++
 						break
 					}
@@ -165,7 +166,7 @@ func seedBySymbol(prompt string, g *Graph) []string {
 	})
 }
 
-func seedByPath(prompt string, g *Graph) []string {
+func seedByPath(prompt string, g *Graph) []seedResult {
 	return seedWith(prompt, g, func(terms []string, _ string, info *NodeInfo) int {
 		score := 0
 		relParts := splitIdentifier(info.RelPath)
@@ -179,19 +180,6 @@ func seedByPath(prompt string, g *Graph) []string {
 		}
 		return score
 	})
-}
-
-func sortedSeeds(results []seedResult) []string {
-	if len(results) == 0 {
-		return nil
-	}
-	// Sort by score descending, then path for stability.
-	sortSeedResults(results)
-	seeds := make([]string, len(results))
-	for i, r := range results {
-		seeds[i] = r.path
-	}
-	return seeds
 }
 
 func sortSeedResults(results []seedResult) {

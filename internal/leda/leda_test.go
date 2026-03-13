@@ -446,7 +446,7 @@ func TestIsolateMultipleSeedsNoPath(t *testing.T) {
 	g.AddEdge("B", "D")
 	// A and B are disconnected
 
-	files := g.isolate([]string{"A", "B"})
+	files := g.isolate([]seedResult{{path: "A", score: 1}, {path: "B", score: 1}})
 	// Should contain A, B, C, D (descendants of each)
 	if len(files) != 4 {
 		t.Errorf("isolate disconnected seeds: got %d files, want 4: %v", len(files), files)
@@ -462,8 +462,8 @@ func TestRankNodesSeedsFirst(t *testing.T) {
 	g.AddEdge("A", "B")
 
 	depths := map[string]int{"S": 0, "A": 1, "B": 2}
-	seeds := map[string]bool{"S": true}
-	ranked := g.rankNodes(depths, seeds)
+	seedScores := map[string]int{"S": 1}
+	ranked := g.rankNodes(depths, seedScores)
 
 	if len(ranked) != 3 {
 		t.Fatalf("rankNodes: got %d nodes, want 3", len(ranked))
@@ -497,8 +497,8 @@ func TestRankNodesFanInPenalty(t *testing.T) {
 	g.AddEdge("leaf_imp", "L")
 
 	depths := map[string]int{"S": 0, "H": 1, "L": 1}
-	seeds := map[string]bool{"S": true}
-	ranked := g.rankNodes(depths, seeds)
+	seedScores := map[string]int{"S": 1}
+	ranked := g.rankNodes(depths, seedScores)
 
 	var hPos, lPos int
 	for i, n := range ranked {
@@ -514,6 +514,26 @@ func TestRankNodesFanInPenalty(t *testing.T) {
 	}
 }
 
+func TestSeedScoreDifferentiation(t *testing.T) {
+	g := newGraph("/test")
+	for _, n := range []string{"high", "low", "dep"} {
+		g.AddNode(NodeInfo{Path: n, RelPath: n})
+	}
+	g.AddEdge("high", "dep")
+	g.AddEdge("low", "dep")
+
+	depths := map[string]int{"high": 0, "low": 0, "dep": 1}
+	seedScores := map[string]int{"high": 3, "low": 1}
+	ranked := g.rankNodes(depths, seedScores)
+
+	if ranked[0] != "high" {
+		t.Errorf("rankNodes: high-score seed should be first, got %s", ranked[0])
+	}
+	if ranked[1] != "low" {
+		t.Errorf("rankNodes: low-score seed should be second, got %s", ranked[1])
+	}
+}
+
 func TestIsolateIncludesCallers(t *testing.T) {
 	g := newGraph("/test")
 	for _, n := range []string{"grandcaller", "caller", "seed", "dep"} {
@@ -523,7 +543,7 @@ func TestIsolateIncludesCallers(t *testing.T) {
 	g.AddEdge("caller", "seed")
 	g.AddEdge("seed", "dep")
 
-	files := g.isolate([]string{"seed"})
+	files := g.isolate([]seedResult{{path: "seed", score: 1}})
 	fileSet := make(map[string]bool)
 	for _, f := range files {
 		fileSet[f] = true

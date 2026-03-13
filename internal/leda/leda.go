@@ -268,9 +268,9 @@ func (g *Graph) IsolateContext(prompt string, opts ...QueryOption) *Context {
 		opt(cfg)
 	}
 
-	seeds := g.findSeeds(prompt, cfg)
+	seedResults := g.findSeeds(prompt, cfg)
 
-	if len(seeds) == 0 {
+	if len(seedResults) == 0 {
 		allNodes := g.Nodes()
 		return &Context{
 			Files:      allNodes,
@@ -280,7 +280,12 @@ func (g *Graph) IsolateContext(prompt string, opts ...QueryOption) *Context {
 		}
 	}
 
-	files := g.isolate(seeds)
+	seeds := make([]string, len(seedResults))
+	for i, r := range seedResults {
+		seeds[i] = r.path
+	}
+
+	files := g.isolate(seedResults)
 	files, totalTokens := g.applyBudget(files, cfg)
 
 	return &Context{
@@ -291,7 +296,7 @@ func (g *Graph) IsolateContext(prompt string, opts ...QueryOption) *Context {
 	}
 }
 
-func (g *Graph) findSeeds(prompt string, cfg *queryConfig) []string {
+func (g *Graph) findSeeds(prompt string, cfg *queryConfig) []seedResult {
 	switch cfg.strategy {
 	case SeedSymbol:
 		return seedBySymbol(prompt, g)
@@ -299,7 +304,12 @@ func (g *Graph) findSeeds(prompt string, cfg *queryConfig) []string {
 		return seedByPath(prompt, g)
 	case SeedCustom:
 		if cfg.customSeeder != nil {
-			return cfg.customSeeder(prompt, g.NodeInfos())
+			paths := cfg.customSeeder(prompt, g.NodeInfos())
+			results := make([]seedResult, len(paths))
+			for i, p := range paths {
+				results[i] = seedResult{path: p, score: 1}
+			}
+			return results
 		}
 		return nil
 	default:
@@ -307,44 +317,46 @@ func (g *Graph) findSeeds(prompt string, cfg *queryConfig) []string {
 	}
 }
 
-func (g *Graph) isolate(seeds []string) []string {
+func (g *Graph) isolate(seeds []seedResult) []string {
 	isolated := make(map[string]bool, len(seeds))
-	seedSet := make(map[string]bool, len(seeds))
-	for _, s := range seeds {
-		isolated[s] = true
-		seedSet[s] = true
+	seedScores := make(map[string]int, len(seeds))
+	seedPaths := make([]string, len(seeds))
+	for i, s := range seeds {
+		isolated[s.path] = true
+		seedScores[s.path] = s.score
+		seedPaths[i] = s.path
 	}
 
 	if len(seeds) == 1 {
-		for _, d := range g.descendants(seeds[0]) {
+		for _, d := range g.descendants(seedPaths[0]) {
 			isolated[d] = true
 		}
 	} else {
 		foundPath := false
-		for i := 0; i < len(seeds); i++ {
-			for j := i + 1; j < len(seeds); j++ {
-				if path, err := g.shortestPath(seeds[i], seeds[j]); err == nil {
+		for i := 0; i < len(seedPaths); i++ {
+			for j := i + 1; j < len(seedPaths); j++ {
+				if path, err := g.shortestPath(seedPaths[i], seedPaths[j]); err == nil {
 					foundPath = true
 					for _, n := range path {
 						isolated[n] = true
 					}
-					for _, d := range g.descendants(seeds[j]) {
+					for _, d := range g.descendants(seedPaths[j]) {
 						isolated[d] = true
 					}
 				}
-				if path, err := g.shortestPath(seeds[j], seeds[i]); err == nil {
+				if path, err := g.shortestPath(seedPaths[j], seedPaths[i]); err == nil {
 					foundPath = true
 					for _, n := range path {
 						isolated[n] = true
 					}
-					for _, d := range g.descendants(seeds[i]) {
+					for _, d := range g.descendants(seedPaths[i]) {
 						isolated[d] = true
 					}
 				}
 			}
 		}
 		if !foundPath {
-			for _, s := range seeds {
+			for _, s := range seedPaths {
 				for _, d := range g.descendants(s) {
 					isolated[d] = true
 				}
@@ -353,15 +365,15 @@ func (g *Graph) isolate(seeds []string) []string {
 	}
 
 	// Add 1-hop callers of seeds.
-	for _, s := range seeds {
+	for _, s := range seedPaths {
 		for _, caller := range g.inEdges[s] {
 			isolated[caller] = true
 		}
 	}
 
-	// Compute depths: seeds=0, forward BFS from each seed, callers=1.
+	// Compute depths: seeds=0, forward BFS from each seed, callers=2.
 	nodeDepths := make(map[string]int)
-	for _, s := range seeds {
+	for _, s := range seedPaths {
 		nodeDepths[s] = 0
 		for node, dist := range g.reachableWithDepth(s, g.outEdges) {
 			if !isolated[node] {
@@ -372,18 +384,18 @@ func (g *Graph) isolate(seeds []string) []string {
 			}
 		}
 	}
-	for _, s := range seeds {
+	for _, s := range seedPaths {
 		for _, caller := range g.inEdges[s] {
 			if _, ok := nodeDepths[caller]; !ok {
-				nodeDepths[caller] = 1
+				nodeDepths[caller] = 2
 			}
 		}
 	}
 
-	return g.rankNodes(nodeDepths, seedSet)
+	return g.rankNodes(nodeDepths, seedScores)
 }
 
-func (g *Graph) rankNodes(depths map[string]int, seeds map[string]bool) []string {
+func (g *Graph) rankNodes(depths map[string]int, seedScores map[string]int) []string {
 	totalNodes := float64(len(g.nodes))
 	files := make([]string, 0, len(depths))
 	for node := range depths {
@@ -392,11 +404,11 @@ func (g *Graph) rankNodes(depths map[string]int, seeds map[string]bool) []string
 
 	score := func(node string) float64 {
 		var seedBonus float64
-		if seeds[node] {
-			seedBonus = 10.0
+		if sc, ok := seedScores[node]; ok {
+			seedBonus = 10.0 + float64(sc)
 		}
 		s := seedBonus + 1.0/(1.0+float64(depths[node]))
-		if !seeds[node] && totalNodes > 0 {
+		if _, isSeed := seedScores[node]; !isSeed && totalNodes > 0 {
 			fanIn := float64(len(g.inEdges[node]))
 			if fanIn/totalNodes > 0.05 {
 				s *= 1.0 - fanIn/totalNodes
